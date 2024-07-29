@@ -1,0 +1,14 @@
+quiet: False
+keeptree: False
+with-expecter: true
+mockname: "{{.InterfaceName}}"
+filename: "{{.MockName}}.go"
+outpkg: mocks
+dir: mocks
+packages:
+    github.com/inaciogu/go-sqs/consumer:
+        config:
+        interfaces:
+            SQSClientInterface:
+            SQSService:
+

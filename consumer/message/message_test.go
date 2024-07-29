@@ -3,8 +3,8 @@ package message_test
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/stretchr/testify/suite"
 )
@@ -18,11 +18,11 @@ func TestUnitSuites(t *testing.T) {
 }
 
 func (u *UnitTest) TestSQSMessage() {
-	sqsMessage := sqs.Message{
+	sqsMessage := types.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
 		Body:          aws.String(`{"content": "fake-content"}`),
-		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+		MessageAttributes: map[string]types.MessageAttributeValue{
 			"attribute1": {
 				DataType:    aws.String("String"),
 				StringValue: aws.String("value1"),
@@ -30,7 +30,7 @@ func (u *UnitTest) TestSQSMessage() {
 		},
 	}
 
-	message := message.New(&sqsMessage)
+	message := message.New(sqsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
@@ -38,11 +38,11 @@ func (u *UnitTest) TestSQSMessage() {
 }
 
 func (u *UnitTest) TestSNSMessage() {
-	snsMessage := sqs.Message{
+	snsMessage := types.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
-		Attributes: map[string]*string{
-			"ApproximateReceiveCount": aws.String("1"),
+		Attributes: map[string]string{
+			"ApproximateReceiveCount": "1",
 		},
 		Body: aws.String(`
 			{
@@ -57,7 +57,7 @@ func (u *UnitTest) TestSNSMessage() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := message.New(snsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
@@ -68,7 +68,7 @@ func (u *UnitTest) TestSNSMessage() {
 }
 
 func (u *UnitTest) TestSNSWithoutMessageAttributes() {
-	snsMessage := sqs.Message{
+	snsMessage := types.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
 		Body: aws.String(`
@@ -78,7 +78,7 @@ func (u *UnitTest) TestSNSWithoutMessageAttributes() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := message.New(snsMessage)
 
 	u.Equal("message-id", message.Metadata.MessageId)
 	u.Equal("receipt-handle", message.Metadata.ReceiptHandle)
@@ -87,7 +87,7 @@ func (u *UnitTest) TestSNSWithoutMessageAttributes() {
 }
 
 func (u *UnitTest) TestUnmarshal() {
-	snsMessage := sqs.Message{
+	snsMessage := types.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
 		Body: aws.String(`
@@ -103,7 +103,7 @@ func (u *UnitTest) TestUnmarshal() {
 		`),
 	}
 
-	message := message.New(&snsMessage)
+	message := message.New(snsMessage)
 
 	User := struct {
 		Name string `json:"name"`
@@ -121,13 +121,13 @@ func (u *UnitTest) TestUnmarshal() {
 }
 
 func (u *UnitTest) TestUnmarshalWithError() {
-	snsMessage := sqs.Message{
+	snsMessage := types.Message{
 		MessageId:     aws.String("message-id"),
 		ReceiptHandle: aws.String("receipt-handle"),
 		Body:          aws.String("not a json"),
 	}
 
-	message := message.New(&snsMessage)
+	message := message.New(snsMessage)
 
 	User := struct {
 		Email string `json:"email"`

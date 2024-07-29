@@ -2,7 +2,8 @@ package message
 
 import (
 	"encoding/json"
-	"github.com/aws/aws-sdk-go/service/sqs"
+
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 type MessageAttributes map[string]Attribute
@@ -33,7 +34,7 @@ const (
 	SNS = "SNS"
 )
 
-func New(sqsMessage *sqs.Message) *Message {
+func New(sqsMessage types.Message) *Message {
 	content := getContent(sqsMessage)
 	metadata := MessageMetadata{
 		MessageId:         *sqsMessage.MessageId,
@@ -47,11 +48,10 @@ func New(sqsMessage *sqs.Message) *Message {
 	}
 }
 
-func getMessageSource(sqsMessage *sqs.Message) string {
+func getMessageSource(sqsMessage types.Message) string {
 	snsBody := SNSMessageBody{}
 
 	err := json.Unmarshal([]byte(*sqsMessage.Body), &snsBody)
-
 	if err != nil {
 		return SQS
 	}
@@ -63,7 +63,7 @@ func getMessageSource(sqsMessage *sqs.Message) string {
 	return SQS
 }
 
-func getContent(sqsMessage *sqs.Message) string {
+func getContent(sqsMessage types.Message) string {
 	messageSource := getMessageSource(sqsMessage)
 
 	if messageSource == SNS {
@@ -77,12 +77,12 @@ func getContent(sqsMessage *sqs.Message) string {
 	return *sqsMessage.Body
 }
 
-func getMessageAttributes(message *sqs.Message) map[string]string {
+func getMessageAttributes(message types.Message) map[string]string {
 	attributes := make(map[string]string)
 	messageSource := getMessageSource(message)
 
 	for key, value := range message.Attributes {
-		attributes[key] = *value
+		attributes[key] = value
 	}
 
 	if messageSource == SQS {
@@ -106,7 +106,6 @@ func getMessageAttributes(message *sqs.Message) map[string]string {
 
 func (m *Message) Unmarshal(v interface{}) error {
 	err := json.Unmarshal([]byte(m.Content), v)
-
 	if err != nil {
 		return err
 	}

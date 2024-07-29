@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func (ut *UnitTest) TestRun() {
 		client.On("Start").Return()
 	}
 
-	go ut.handler.Run()
+	go ut.handler.Run(context.TODO())
 
 	time.Sleep(100 * time.Millisecond)
 

@@ -1,14 +1,17 @@
 package consumer_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"github.com/inaciogu/go-sqs/consumer"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/inaciogu/go-sqs/consumer"
+
 	"github.com/inaciogu/go-sqs/consumer/message"
 	"github.com/inaciogu/go-sqs/mocks"
 	"github.com/stretchr/testify/assert"
@@ -81,7 +84,7 @@ func (ut *UnitTest) TestGetQueueUrl() {
 		QueueName: "fake-queue-name",
 	})
 
-	queueURL := client.GetQueueUrl()
+	queueURL := client.GetQueueUrl(context.TODO())
 
 	assert.Equal(ut.T(), "https://fake-queue-url", *queueURL)
 
@@ -98,7 +101,7 @@ func (ut *UnitTest) TestQueueUrl_Error() {
 	})
 
 	assert.Panics(ut.T(), func() {
-		client.GetQueueUrl()
+		client.GetQueueUrl(context.TODO())
 	})
 }
 
@@ -115,7 +118,7 @@ func (ut *UnitTest) TestReceiveMessage() {
 	})
 
 	expectedOutput := &sqs.ReceiveMessageOutput{
-		Messages: []*sqs.Message{
+		Messages: []types.Message{
 			{
 				Body:          aws.String(`{"content": "fake-content"}`),
 				ReceiptHandle: aws.String("fake-receipt-handle"),
@@ -128,9 +131,9 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	ut.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	ch := make(chan *sqs.Message, 1)
+	ch := make(chan types.Message, 1)
 
-	go client.ReceiveMessages("https://fake-queue-url", ch)
+	go client.ReceiveMessages(context.TODO(), "https://fake-queue-url", ch)
 
 	time.Sleep(600 * time.Millisecond)
 
@@ -138,10 +141,10 @@ func (ut *UnitTest) TestReceiveMessage() {
 
 	ut.mockSQSService.AssertCalled(ut.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
-		MaxNumberOfMessages: aws.Int64(10),
-		VisibilityTimeout:   aws.Int64(30),
-		WaitTimeSeconds:     aws.Int64(20),
-		AttributeNames:      []*string{aws.String("All")},
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   30,
+		WaitTimeSeconds:     20,
+		AttributeNames:      []types.QueueAttributeName{types.QueueAttributeNameAll},
 	})
 	ut.Assert().Equal(1, len(ch))
 }
@@ -160,10 +163,10 @@ func (ut *UnitTest) TestReceiveMessage_Error() {
 		},
 	})
 
-	ch := make(chan *sqs.Message)
+	ch := make(chan types.Message)
 
 	assert.Panics(ut.T(), func() {
-		client.ReceiveMessages("https://fake-queue-url", ch)
+		client.ReceiveMessages(context.TODO(), "https://fake-queue-url", ch)
 	})
 }
 
@@ -179,7 +182,7 @@ func (uts *UnitTest) TestProcessMessage_Handled_Error() {
 		},
 	})
 
-	message := &sqs.Message{
+	message := types.Message{
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
@@ -188,7 +191,7 @@ func (uts *UnitTest) TestProcessMessage_Handled_Error() {
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, errors.New("Error"))
 
 	assert.Panics(uts.T(), func() {
-		client.ProcessMessage(message, "https://fake-queue-url")
+		client.ProcessMessage(context.TODO(), message, "https://fake-queue-url")
 	})
 }
 
@@ -204,7 +207,7 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 		},
 	})
 
-	message := &sqs.Message{
+	message := types.Message{
 		Body: aws.String(`{
 			"Message": "{\n  \"asda\": \"asdas\"\n}",
 			"MessageId": "fake-message-id",
@@ -222,7 +225,7 @@ func (uts *UnitTest) TestProcessMessage_Handled() {
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	client.ProcessMessage(message, "https://fake-queue-url")
+	client.ProcessMessage(context.TODO(), message, "https://fake-queue-url")
 
 	uts.mockSQSService.AssertCalled(uts.T(), "DeleteMessage", &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String("https://fake-queue-url"),
@@ -242,11 +245,11 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled_Error() {
 		},
 	})
 
-	message := &sqs.Message{
+	message := types.Message{
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
-		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+		MessageAttributes: map[string]types.MessageAttributeValue{
 			"AproximateReceiveCount": {
 				DataType:    aws.String("Number"),
 				StringValue: aws.String("1"),
@@ -257,7 +260,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled_Error() {
 	uts.mockSQSService.On("ChangeMessageVisibility", mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, errors.New("Error"))
 
 	assert.Panics(uts.T(), func() {
-		client.ProcessMessage(message, "https://fake-queue-url")
+		client.ProcessMessage(context.TODO(), message, "https://fake-queue-url")
 	})
 }
 
@@ -273,11 +276,11 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 		},
 	})
 
-	message := &sqs.Message{
+	message := types.Message{
 		Body:          aws.String(`{"content": "fake-content"}`),
 		ReceiptHandle: aws.String("fake-receipt-handle"),
 		MessageId:     aws.String("fake-message-id"),
-		MessageAttributes: map[string]*sqs.MessageAttributeValue{
+		MessageAttributes: map[string]types.MessageAttributeValue{
 			"ApproximateReceiveCount": {
 				DataType:    aws.String("String"),
 				StringValue: aws.String("2"),
@@ -287,7 +290,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 
 	uts.mockSQSService.On("ChangeMessageVisibility", mock.Anything).Return(&sqs.ChangeMessageVisibilityOutput{}, nil)
 
-	client.ProcessMessage(message, "https://fake-queue-url")
+	client.ProcessMessage(context.TODO(), message, "https://fake-queue-url")
 
 	uts.mockSQSService.AssertNotCalled(uts.T(), "DeleteMessage", &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String("https://fake-queue-url"),
@@ -296,7 +299,7 @@ func (uts *UnitTest) TestProcessMessage_Not_Handled() {
 	uts.mockSQSService.AssertCalled(uts.T(), "ChangeMessageVisibility", &sqs.ChangeMessageVisibilityInput{
 		QueueUrl:          aws.String("https://fake-queue-url"),
 		ReceiptHandle:     aws.String("fake-receipt-handle"),
-		VisibilityTimeout: aws.Int64(4),
+		VisibilityTimeout: 4,
 	})
 }
 
@@ -313,7 +316,7 @@ func (uts *UnitTest) TestPoll() {
 	})
 
 	uts.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{
-		Messages: []*sqs.Message{
+		Messages: []types.Message{
 			{
 				Body:          aws.String(`{"content": "fake-content"}`),
 				ReceiptHandle: aws.String("fake-receipt-handle"),
@@ -324,16 +327,16 @@ func (uts *UnitTest) TestPoll() {
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	go client.Poll()
+	go client.Poll(context.TODO())
 
 	time.Sleep(600 * time.Millisecond)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
-		MaxNumberOfMessages: aws.Int64(10),
-		VisibilityTimeout:   aws.Int64(30),
-		WaitTimeSeconds:     aws.Int64(20),
-		AttributeNames:      []*string{aws.String("All")},
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   30,
+		WaitTimeSeconds:     20,
+		AttributeNames:      []types.QueueAttributeName{types.QueueAttributeNameAll},
 	})
 	uts.mockSQSService.AssertCalled(uts.T(), "GetQueueUrl", &sqs.GetQueueUrlInput{
 		QueueName: aws.String("fake-queue-name"),
@@ -351,7 +354,7 @@ func (ut *UnitTest) TestGetQueues_Error() {
 	ut.mockSQSService.On("ListQueues", mock.Anything).Return(nil, errors.New("Error"))
 
 	assert.Panics(ut.T(), func() {
-		client.GetQueues("fake-queue-name")
+		client.GetQueues(context.TODO(), "fake-queue-name")
 	})
 }
 
@@ -364,13 +367,13 @@ func (uts *UnitTest) TestGetQueues() {
 	})
 
 	uts.mockSQSService.On("ListQueues", mock.Anything).Return(&sqs.ListQueuesOutput{
-		QueueUrls: []*string{
-			aws.String("https://fake-queue-url"),
-			aws.String("https://fake-queue-url-2"),
+		QueueUrls: []string{
+			"https://fake-queue-url",
+			"https://fake-queue-url-2",
 		},
 	}, nil)
 
-	queues := client.GetQueues("fake-queue-name")
+	queues := client.GetQueues(context.TODO(), "fake-queue-name")
 
 	assert.Equal(uts.T(), 2, len(queues))
 
@@ -389,14 +392,14 @@ func (uts *UnitTest) TestPollPrefixBased() {
 	})
 
 	uts.mockSQSService.On("ListQueues", mock.Anything).Return(&sqs.ListQueuesOutput{
-		QueueUrls: []*string{
-			aws.String("https://fake-queue-url"),
-			aws.String("https://fake-queue-url-2"),
+		QueueUrls: []string{
+			"https://fake-queue-url",
+			"https://fake-queue-url-2",
 		},
 	}, nil)
 
 	uts.mockSQSService.On("ReceiveMessage", mock.Anything).Return(&sqs.ReceiveMessageOutput{
-		Messages: []*sqs.Message{
+		Messages: []types.Message{
 			{
 				Body:          aws.String(`{"content": "fake-content"}`),
 				ReceiptHandle: aws.String("fake-receipt-handle"),
@@ -407,7 +410,7 @@ func (uts *UnitTest) TestPollPrefixBased() {
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	go client.Poll()
+	go client.Poll(context.TODO())
 
 	time.Sleep(600 * time.Millisecond)
 
@@ -433,15 +436,15 @@ func (uts *UnitTest) TestStart() {
 
 	uts.mockSQSService.On("DeleteMessage", mock.Anything).Return(&sqs.DeleteMessageOutput{}, nil)
 
-	go client.Start()
+	go client.Start(context.TODO())
 
 	time.Sleep(600 * time.Millisecond)
 
 	uts.mockSQSService.AssertCalled(uts.T(), "ReceiveMessage", &sqs.ReceiveMessageInput{
 		QueueUrl:            aws.String("https://fake-queue-url"),
-		MaxNumberOfMessages: aws.Int64(10),
-		VisibilityTimeout:   aws.Int64(30),
-		WaitTimeSeconds:     aws.Int64(20),
-		AttributeNames:      []*string{aws.String("All")},
+		MaxNumberOfMessages: 10,
+		VisibilityTimeout:   30,
+		WaitTimeSeconds:     20,
+		AttributeNames:      []types.QueueAttributeName{types.QueueAttributeNameAll},
 	})
 }

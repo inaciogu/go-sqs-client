@@ -1,24 +1,25 @@
 package consumer
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/inaciogu/go-sqs/consumer/logger"
 	"github.com/inaciogu/go-sqs/consumer/message"
 )
 
 type SQSService interface {
-	GetQueueUrl(input *sqs.GetQueueUrlInput) (*sqs.GetQueueUrlOutput, error)
-	ReceiveMessage(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)
-	ChangeMessageVisibility(input *sqs.ChangeMessageVisibilityInput) (*sqs.ChangeMessageVisibilityOutput, error)
-	DeleteMessage(input *sqs.DeleteMessageInput) (*sqs.DeleteMessageOutput, error)
-	ListQueues(input *sqs.ListQueuesInput) (*sqs.ListQueuesOutput, error)
+	GetQueueUrl(ctx context.Context, input *sqs.GetQueueUrlInput, opts ...func(*sqs.Options)) (*sqs.GetQueueUrlOutput, error)
+	ReceiveMessage(ctx context.Context, input *sqs.ReceiveMessageInput, opts ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
+	ChangeMessageVisibility(ctx context.Context, input *sqs.ChangeMessageVisibilityInput, opts ...func(*sqs.Options)) (*sqs.ChangeMessageVisibilityOutput, error)
+	DeleteMessage(ctx context.Context, input *sqs.DeleteMessageInput, opts ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error)
+	ListQueues(ctx context.Context, input *sqs.ListQueuesInput, opts ...func(*sqs.Options)) (*sqs.ListQueuesOutput, error)
 }
 
 type Logger interface {
@@ -26,12 +27,12 @@ type Logger interface {
 }
 
 type SQSClientInterface interface {
-	GetQueueUrl() *string
-	ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
-	ProcessMessage(message *sqs.Message, queueUrl string)
-	Poll()
-	GetQueues(prefix string) []*string
-	Start()
+	GetQueueUrl(context.Context) *string
+	ReceiveMessages(ctx context.Context, queueUrl string, ch chan types.Message) error
+	ProcessMessage(ctx context.Context, message types.Message, queueUrl string)
+	Poll(context.Context)
+	GetQueues(ctx context.Context, prefix string) []string
+	Start(context.Context)
 }
 
 type SQSClientOptions struct {
@@ -43,13 +44,18 @@ type SQSClientOptions struct {
 	Endpoint string
 	// PrefixBased is a flag that indicates if the queue name is a prefix
 	PrefixBased         bool
-	MaxNumberOfMessages int64
-	VisibilityTimeout   int64
-	WaitTimeSeconds     int64
+	MaxNumberOfMessages int32
+	VisibilityTimeout   int32
+	WaitTimeSeconds     int32
 	LogLevel            string
 	// BackoffMultiplier is the multiplier used to calculate the backoff time (visibility timeout)
 	BackoffMultiplier float64
 }
+
+var (
+	_ SQSClientInterface = &SQSClient{}
+	_ SQSService         = &sqs.Client{}
+)
 
 type SQSClient struct {
 	Client        SQSService
@@ -70,14 +76,16 @@ func New(sqsService SQSService, options SQSClientOptions) *SQSClient {
 	}
 
 	if sqsService == nil {
-		sess := session.Must(session.NewSessionWithOptions(session.Options{
-			Config: aws.Config{
-				Credentials: credentials.NewCredentials(&credentials.EnvProvider{}),
-				Region:      aws.String(options.Region),
-				Endpoint:    aws.String(options.Endpoint),
-			},
-		}))
-		sqsService = sqs.New(sess)
+
+		sdkConfig, err := config.LoadDefaultConfig(context.Background(),
+			config.WithRegion(options.Region),
+			config.WithSharedCredentialsFiles([]string{config.DefaultSharedCredentialsFilename()}),
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		sqsService = sqs.NewFromConfig(sdkConfig)
 	}
 
 	setDefaultOptions(&options)
@@ -121,26 +129,24 @@ func (s *SQSClient) SetLogger(logger Logger) {
 }
 
 // GetQueueUrl returns the URL of the queue based on the queue name
-func (s *SQSClient) GetQueueUrl() *string {
-	urlResult, err := s.Client.GetQueueUrl(&sqs.GetQueueUrlInput{
+func (s *SQSClient) GetQueueUrl(ctx context.Context) *string {
+	urlResult, err := s.Client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{
 		QueueName: aws.String(s.ClientOptions.QueueName),
 	})
-
 	if err != nil {
 		panic(err)
 	}
 
-	return aws.String(*urlResult.QueueUrl)
+	return urlResult.QueueUrl
 }
 
 // GetQueues returns a list of queues based on the prefix
-func (s *SQSClient) GetQueues(prefix string) []*string {
+func (s *SQSClient) GetQueues(ctx context.Context, prefix string) []string {
 	input := &sqs.ListQueuesInput{
 		QueueNamePrefix: aws.String(prefix),
 	}
 
-	result, err := s.Client.ListQueues(input)
-
+	result, err := s.Client.ListQueues(ctx, input)
 	if err != nil {
 		panic(err)
 	}
@@ -149,7 +155,7 @@ func (s *SQSClient) GetQueues(prefix string) []*string {
 }
 
 // ReceiveMessages polls messages from the queue
-func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error {
+func (s *SQSClient) ReceiveMessages(ctx context.Context, queueUrl string, ch chan types.Message) error {
 	splittedUrl := strings.Split(queueUrl, "/")
 
 	queueName := splittedUrl[len(splittedUrl)-1]
@@ -157,14 +163,13 @@ func (s *SQSClient) ReceiveMessages(queueUrl string, ch chan *sqs.Message) error
 	for {
 		s.Logger.Log("polling messages from queue %s", queueName)
 
-		result, err := s.Client.ReceiveMessage(&sqs.ReceiveMessageInput{
+		result, err := s.Client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueUrl),
-			MaxNumberOfMessages: aws.Int64(s.ClientOptions.MaxNumberOfMessages),
-			WaitTimeSeconds:     aws.Int64(s.ClientOptions.WaitTimeSeconds),
-			VisibilityTimeout:   aws.Int64(s.ClientOptions.VisibilityTimeout),
-			AttributeNames:      []*string{aws.String("All")},
+			MaxNumberOfMessages: s.ClientOptions.MaxNumberOfMessages,
+			WaitTimeSeconds:     s.ClientOptions.WaitTimeSeconds,
+			VisibilityTimeout:   s.ClientOptions.VisibilityTimeout,
+			AttributeNames:      []types.QueueAttributeName{types.QueueAttributeNameAll},
 		})
-
 		if err != nil {
 			panic(err)
 		}
@@ -183,7 +188,7 @@ func (s *SQSClient) calculateBackoff(attempts int) float64 {
 }
 
 // ProcessMessage deletes or changes the visibility of the message based on the Handle function return.
-func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
+func (s *SQSClient) ProcessMessage(ctx context.Context, sqsMessage types.Message, queueUrl string) {
 	message := message.New(sqsMessage)
 
 	handled := s.ClientOptions.Handle(message)
@@ -193,12 +198,11 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 
 		backoff := s.calculateBackoff(attempts)
 
-		_, err := s.Client.ChangeMessageVisibility(&sqs.ChangeMessageVisibilityInput{
+		_, err := s.Client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
 			QueueUrl:          aws.String(queueUrl),
 			ReceiptHandle:     &message.Metadata.ReceiptHandle,
-			VisibilityTimeout: aws.Int64(int64(backoff)),
+			VisibilityTimeout: int32(backoff),
 		})
-
 		if err != nil {
 			panic(err)
 		}
@@ -208,11 +212,10 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 		return
 	}
 
-	_, err := s.Client.DeleteMessage(&sqs.DeleteMessageInput{
+	_, err := s.Client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(queueUrl),
 		ReceiptHandle: &message.Metadata.ReceiptHandle,
 	})
-
 	if err != nil {
 		panic(err)
 	}
@@ -221,36 +224,36 @@ func (s *SQSClient) ProcessMessage(sqsMessage *sqs.Message, queueUrl string) {
 }
 
 // Poll starts polling messages from the queue
-func (s *SQSClient) Poll() {
+func (s *SQSClient) Poll(ctx context.Context) {
 	if s.ClientOptions.PrefixBased {
-		queues := s.GetQueues(s.ClientOptions.QueueName)
+		queues := s.GetQueues(ctx, s.ClientOptions.QueueName)
 
 		for _, queue := range queues {
-			ch := make(chan *sqs.Message)
+			ch := make(chan types.Message)
 
-			go s.ReceiveMessages(*queue, ch)
+			go s.ReceiveMessages(ctx, queue, ch)
 
 			go func(queueUrl string) {
 				for message := range ch {
-					go s.ProcessMessage(message, queueUrl)
+					go s.ProcessMessage(ctx, message, queueUrl)
 				}
-			}(*queue)
+			}(queue)
 		}
 
 		select {}
 	}
 
-	ch := make(chan *sqs.Message)
+	ch := make(chan types.Message)
 
-	queueUrl := s.GetQueueUrl()
+	queueUrl := s.GetQueueUrl(ctx)
 
-	go s.ReceiveMessages(*queueUrl, ch)
+	go s.ReceiveMessages(ctx, *queueUrl, ch)
 
 	for message := range ch {
-		go s.ProcessMessage(message, *queueUrl)
+		go s.ProcessMessage(ctx, message, *queueUrl)
 	}
 }
 
-func (s *SQSClient) Start() {
-	s.Poll()
+func (s *SQSClient) Start(ctx context.Context) {
+	s.Poll(ctx)
 }

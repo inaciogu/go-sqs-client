@@ -1,6 +1,10 @@
 package handler
 
-import sqsclient "github.com/inaciogu/go-sqs/consumer"
+import (
+	"context"
+
+	sqsclient "github.com/inaciogu/go-sqs/consumer"
+)
 
 // SQSHandler is responsible for running the SQS clients concurrently
 type SQSHandler struct {
@@ -13,9 +17,9 @@ func New(clients []sqsclient.SQSClientInterface) *SQSHandler {
 	}
 }
 
-func (h *SQSHandler) Run() {
+func (h *SQSHandler) Run(ctx context.Context) {
 	for _, client := range h.Clients {
-		go client.Start()
+		go client.Start(ctx)
 	}
 
 	select {}
